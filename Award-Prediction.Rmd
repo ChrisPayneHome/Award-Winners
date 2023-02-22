@@ -1,0 +1,100 @@
+---
+title: "Award Prediction"
+author: "Christian"
+date: "`r Sys.Date()`"
+output:
+  prettydoc::html_pretty:
+    theme: hpstr
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+```
+
+# Award Prediction
+
+How predictive are other awards in predicting the probability of winning Best Film at the Oscars? For this project we'll be taking data from the big awards that take place prior to the Oscars and 
+
+For this project we'll be using data scraped from the Wikipedia lists of winners for each award:
+
+* [Oscars]("https://en.wikipedia.org/wiki/List_of_Academy_Award-winning_films")
+* [Golden Globes]("https://en.wikipedia.org/wiki/List_of_Golden_Globe_winners")
+* [Palme D'Or]("https://en.wikipedia.org/wiki/Palme_d%27Or#Winners")
+* [BAFTAs]("https://en.wikipedia.org/wiki/BAFTA_Award_for_Best_Film")
+
+## Import Data
+
+### Oscar Data
+
+Firstly, we need to import the data on Oscar winners. This dataset contains data on the name of the film, year nominated, awards won, awards nominated, and whether that film won best picture.
+
+```{r import-oscars, message=FALSE, warning=FALSE}
+
+oscar_data <- read_csv("Data/oscar_best_film.csv")
+head(oscar_data)
+```
+
+### Golden Globes Data
+
+Next, we'll need to import the data on Golden Globes. The data requires a little bit of cleaning before we can use it. Specifically we'll need to extract the names of the film that won, or associated with the winner of, each award.
+
+```{r import-gg, message=FALSE, warning=FALSE}
+
+gg_data <- read_csv("Data/gg_winners.csv") %>%
+  mutate(Year = str_sub(Year, 1, 4),
+         Drama_actor = sapply(str_split(`Drama Actor`, ","), `[`, 2),
+         Drama_actress = sapply(str_split(`Drama Actress`, ","), `[`, 2),
+         Director = sapply(str_split(Director, ","), `[`, 2),
+         MC_actor = sapply(str_split(`Musical/Comedy Actor`, ","), `[`, 2),
+         MC_actress = sapply(str_split(`Musical/Comedy Actress`, ","), `[`, 2)) %>%
+  select(Year,
+         Drama_actor,
+         Drama_actress,
+         Director,
+         MC_actor,
+         MC_actress)
+head(gg_data)
+```
+
+### Palme D'Or Winners
+
+After that, we'll need to import the dataset of Palme D'Or winners. This doesn't require any cleaning really, just selecting the only relevant columns.
+
+```{r import-pdo, message=FALSE, warning=FALSE}
+
+pdo_data <- read_csv("Data/pdo_winners.csv") %>%
+  select(Year, Film)
+
+```
+
+### Bafta Data
+
+Finally we'll need to import the data for the BAFTAS. This will require a bit of cleaning and concatenation of the datasets for each decade.
+
+```{r import-baftas, message=FALSE, warning=FALSE}
+
+baftas_list <- list.files("Data/BAFTA")
+
+for (data in baftas_list) {
+  data <- read_csv(paste0("Data/BAFTA/", data))
+  if (exists("bafta_data")) {
+    bafta_data <- rbind(bafta_data, data)
+  } else {
+    bafta_data <- data
+  }
+}
+
+bafta_data <- bafta_data %>%
+  mutate(Year = as.numeric(substring(Year, 1, 4)),
+         Film = gsub('[0-9]{2}', '', Film)) %>%
+  select(Year, Film, Won) %>%
+  arrange(-Year)
+
+head(bafta_data)
+```
+
+## Clean Data
+
+Now that we've imported the data, we can now begin to construct the dataset for our question.
