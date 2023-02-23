@@ -43,7 +43,7 @@ Next, we'll need to import the data on Golden Globes. The data requires a little
 ```{r import-gg, message=FALSE, warning=FALSE}
 
 gg_data <- read_csv("Data/gg_winners.csv") %>%
-  mutate(Year = str_sub(Year, 1, 4),
+  mutate(Year = as.numeric(str_sub(Year, 1, 4)),
          Drama_actor = sapply(str_split(`Drama Actor`, ","), `[`, 2),
          Drama_actress = sapply(str_split(`Drama Actress`, ","), `[`, 2),
          Director = sapply(str_split(Director, ","), `[`, 2),
@@ -98,3 +98,37 @@ head(bafta_data)
 ## Clean Data
 
 Now that we've imported the data, we can now begin to construct the dataset for our question.
+
+```{r final-data, message=FALSE, warning=FALSE}
+
+final_data <- oscar_data %>%
+  
+  # join on golgen globe data
+  left_join(gg_data, by = "Year") %>%
+  mutate(gg_drama_actor = ifelse(Film == Drama_actor, TRUE, FALSE),
+         gg_drama_actress = ifelse(Film == Drama_actress, TRUE, FALSE),
+         gg_director = ifelse(Film == Director, TRUE, FALSE),
+         gg_mc_actor = ifelse(Film == MC_actor, TRUE, FALSE),
+         gg_mc_actress = ifelse(Film == MC_actress, TRUE, FALSE)) %>%
+  select(-Drama_actor,
+         -Drama_actress,
+         -Director,
+         -MC_actor,
+         -MC_actress) %>%
+  
+  # join on Palme D'Or data
+  left_join(pdo_data, by = "Year", suffix = c("", "_pdo")) %>%
+  mutate(pdo_winner = ifelse(Film == Film_pdo, TRUE, FALSE)) %>%
+  select(-Film_pdo) %>%
+  
+  # join the bafta data
+  left_join(bafta_data, by = "Year", suffix = c("", "_bafta")) %>%
+  mutate(bafta_nominated = ifelse(Film == Film_bafta & !Won_bafta, TRUE, FALSE),
+         bafta_won = ifelse(Film == Film_bafta & Won_bafta, TRUE, FALSE)) %>%
+  select(-Won_bafta,
+         -Film_bafta)
+
+```
+
+
+
