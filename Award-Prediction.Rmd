@@ -8,9 +8,12 @@ output:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-
+knitr::opts_chunk$set(echo = FALSE)
 library(tidyverse)
+library(caret)
+library(pROC)
+
+set.seed(442)
 ```
 
 # Award Prediction
@@ -33,6 +36,7 @@ Firstly, we need to import the data on Oscar winners. This dataset contains data
 ```{r import-oscars, message=FALSE, warning=FALSE}
 
 oscar_data <- read_csv("Data/oscar_best_film.csv")
+
 head(oscar_data)
 ```
 
@@ -92,18 +96,20 @@ bafta_data <- bafta_data %>%
   select(Year, Film, Won) %>%
   arrange(-Year)
 
+bafta_data$Film[16] <- "1917"
+
 head(bafta_data)
 ```
 
 ## Clean Data
 
-Now that we've imported the data, we can now begin to construct the dataset for our question.
+Now that we've imported the data, we can now begin to construct the dataset for analysis.
 
 ```{r final-data, message=FALSE, warning=FALSE}
 
 final_data <- oscar_data %>%
   
-  # join on golgen globe data
+  # join on golden globe data
   left_join(gg_data, by = "Year") %>%
   mutate(gg_drama_actor = ifelse(Film == Drama_actor, TRUE, FALSE),
          gg_drama_actress = ifelse(Film == Drama_actress, TRUE, FALSE),
@@ -122,13 +128,165 @@ final_data <- oscar_data %>%
   select(-Film_pdo) %>%
   
   # join the bafta data
-  left_join(bafta_data, by = "Year", suffix = c("", "_bafta")) %>%
-  mutate(bafta_nominated = ifelse(Film == Film_bafta & !Won_bafta, TRUE, FALSE),
-         bafta_won = ifelse(Film == Film_bafta & Won_bafta, TRUE, FALSE)) %>%
-  select(-Won_bafta,
-         -Film_bafta)
+  left_join(bafta_data, by = c("Year", "Film"), suffix = c("", "_bafta")) %>%
+  mutate(bafta_nominated = ifelse(!is.na(Won_bafta) & !Won_bafta, TRUE, FALSE),
+         bafta_winner = ifelse(!is.na(Won_bafta) & Won_bafta, TRUE, FALSE),
+         bafta_not_nominated = ifelse(is.na(Won_bafta), TRUE, FALSE)) %>%
+  select(-Won_bafta) %>%
+  filter(Year >= 1970) %>%
+  replace(is.na(.), FALSE)
 
 ```
 
 
+## Perform analysis
 
+With the data prepared, we can now use it to train the model. Because we're interested in the explainability of the model, I'm selecting a binary logistic regression model.s
+
+```{r train-model1, message=FALSE, warning=FALSE}
+
+index <- createDataPartition(final_data$Won, p = .70, list = FALSE)
+train <- final_data[index, ]
+test <- final_data[-index, ]
+
+
+# create binary logiistic model
+model <- glm(Won ~ Nominations + 
+                    gg_drama_actor +
+                    gg_drama_actress +
+                    gg_director + 
+                    gg_mc_actor + 
+                    gg_mc_actress +
+                    pdo_winner +
+                    bafta_nominated +
+                    bafta_winner + 
+                    bafta_not_nominated, 
+              family = binomial(), 
+              data = train)
+
+summary(model)
+
+```
+
+## Evaluate the model
+
+The next step is naturally to evaluate the model using a variety of model evaluation metrics.
+
+### Confusion matrix
+
+This is a simple table comparing the predictions of the model with the actual results from the test data. This will help us visualise the performance of the model. 
+
+```{r cm-model, message=FALSE, warning=FALSE}
+pred_prob <- predict(model, test, type = "response")
+
+test$predicted_winner <- ifelse(pred_prob >= 0.5, "Won", "Didn't Win")
+
+confusion_matrix <- table(ifelse(test$Won == TRUE, "Won", "Didn't Win"), test$predicted_winner)
+confusion_matrix
+```
+
+### Model accuracy
+
+With this table we can calculate the accuracy of the model.
+
+```{r accuracy-model, message=FALSE, warning=FALSE}
+
+Accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix) * 100
+Accuracy
+
+```
+
+### Precision
+
+Another model metric we can use is 'precision'. Simply stated, this is the proportion of relevant items that have been retrieved. Formally, it is defined as the number of true positives divided by the number of items the model identified as positives.
+
+```{r precision-model, message=FALSE, warning=FALSE}
+
+Precision <- (confusion_matrix[2, 2] / sum(confusion_matrix[2, ])) * 100
+Precision
+
+```
+
+### Recall
+
+Next we'll calculate 'recall'. This is simply the proportion of retrieved items that are relevant.
+
+```{r recall-model, message=FALSE, warning=FALSE}
+
+Recall <- (confusion_matrix[2, 2] / sum(confusion_matrix[, 2])) * 100
+Recall
+
+```
+
+### F1 score
+
+With both precision and recall, we can then calculate the mean of the two. This metric is called the F1 score and provides a single metric that provides a balance between the two.
+
+```{r f1-model, message=FALSE, warning=FALSE}
+
+F_Score <- (2 * Precision * Recall / (Precision + Recall)) / 100
+F_Score
+
+```
+
+### Plotting ROC curve
+
+The final model metric that we'll calculate is the ROC curve. This plot showcases model performance at different classification thresholds.
+
+```{r roc-model, message=FALSE, warning=FALSE}
+predicted <- predict(model, test, type="response")
+rocobj <- roc(test$Won, predicted)
+
+ggroc(rocobj) + 
+  scale_y_continuous(expand = c(0,0)) + 
+  geom_abline(slope = 1, intercept = 1, color = "red", linetype = 2) + 
+  labs(x = "Specificity", 
+       y = "Sensitivity",
+       title = "ROC Curve for Logistic Regression\n") +
+  theme_classic()
+
+```
+
+
+## Create prediction data
+
+With the model trained and evaluated, we can now create the data for the upcoming awards and apply the model to try band predict the winner.
+
+```{r pred-data, message=FALSE, warning=FALSE}
+# create data for upcoming ceremony
+final_pred_data <- read_csv("Data/oscar_best_film_2022.csv") %>%
+  
+  # join on golden globe data
+  left_join(gg_data, by = "Year") %>%
+  mutate(gg_drama_actor = ifelse(Film == Drama_actor, TRUE, FALSE),
+         gg_drama_actress = ifelse(Film == Drama_actress, TRUE, FALSE),
+         gg_director = ifelse(Film == Director, TRUE, FALSE),
+         gg_mc_actor = ifelse(Film == MC_actor, TRUE, FALSE),
+         gg_mc_actress = ifelse(Film == MC_actress, TRUE, FALSE)) %>%
+  select(-Drama_actor,
+         -Drama_actress,
+         -Director,
+         -MC_actor,
+         -MC_actress) %>%
+  
+  # join on Palme D'Or data
+  left_join(pdo_data, by = "Year", suffix = c("", "_pdo")) %>%
+  mutate(pdo_winner = ifelse(Film == Film_pdo, TRUE, FALSE)) %>%
+  select(-Film_pdo) %>%
+  
+  # join the bafta data
+  left_join(bafta_data, by = c("Year", "Film"), suffix = c("", "_bafta")) %>%
+  mutate(bafta_nominated = ifelse(!is.na(Won_bafta) & !Won_bafta, TRUE, FALSE),
+         bafta_winner = ifelse(!is.na(Won_bafta) & Won_bafta, TRUE, FALSE),
+         bafta_not_nominated = ifelse(is.na(Won_bafta), TRUE, FALSE)) %>%
+  select(-Won_bafta)
+
+
+# predict winner for final data
+final_pred_data <- final_pred_data %>%
+  mutate(Won = predict(model, ., type = "response")) %>%
+  arrange(-Won) %>%
+  select(Film, Won)
+
+head(final_pred_data)
+```
